@@ -3,21 +3,49 @@
 import random
 import numpy as np
 
+from scipy.signal import convolve
+
+
+KP_SPEED = 0.001
+KP_ROTATION = 0.2
+
+FOV = np.deg2rad(240)
+KERNEL = np.ones(61)
+
+prev_target = 0.0
+
 
 def reactive_obst_avoid(lidar):
     """
     Simple obstacle avoidance
     lidar : placebot object with lidar data
     """
-    # TODO for TP1
 
-    speed = 0.0
-    rotation_speed = 0.0
+    global prev_target
 
-    command = {"forward": speed,
-               "rotation": rotation_speed}
+    angles = lidar.get_ray_angles()
+    distances = lidar.get_sensor_values()
 
-    return command
+    in_fov = (angles < 0.5 * FOV) & (-0.5 * FOV < angles)
+
+    index = np.argmax(convolve(distances[in_fov], KERNEL, mode="same"))
+
+    target = angles[in_fov][index]
+    dfront = distances[in_fov][index]
+
+    delta = np.abs(target - prev_target)
+
+    if np.abs(target) < np.deg2rad(5.0) and delta < np.deg2rad(5.0):
+        speed = np.clip(KP_SPEED * dfront, -1.0, 1.0)
+        rotation = 0.0
+
+    else:
+        speed = 0.0
+        rotation = np.clip(KP_ROTATION * target, -1.0, 1.0)
+
+    prev_target = target
+
+    return {"forward": speed, "rotation": rotation}
 
 
 def potential_field_control(lidar, current_pose, goal_pose):
