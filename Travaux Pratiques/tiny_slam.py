@@ -6,6 +6,13 @@ import numpy as np
 from occupancy_grid import OccupancyGrid
 
 
+WALL_WIDTH = 2.0
+WALL_SPACING = 10.0
+
+MIN_LOG_PROB = -30.0
+MAX_LOG_PROB =  30.0
+
+
 class TinySlam:
     """Simple occupancy grid SLAM"""
 
@@ -58,4 +65,31 @@ class TinySlam:
         lidar : placebot object with lidar data
         pose : [x, y, theta] nparray, corrected pose in world coordinates
         """
-        # TODO for TP3
+
+        angles = lidar.get_ray_angles() + pose[2]
+        distances = lidar.get_sensor_values()
+
+        cos, sin = np.cos(angles), np.sin(angles)
+
+        x_wall = (distances - WALL_SPACING) * cos + pose[0]
+        y_wall = (distances - WALL_SPACING) * sin + pose[1]
+
+        x_bef = (distances - WALL_WIDTH / 2) * cos + pose[0]
+        y_bef = (distances - WALL_WIDTH / 2) * sin + pose[1]
+
+        x_aft = (distances + WALL_WIDTH / 2) * cos + pose[0]
+        y_aft = (distances + WALL_WIDTH / 2) * sin + pose[1]
+
+        prob = np.log10(0.95 / (1.0 - 0.95))
+
+        for i in range(len(angles)):
+            self.grid.add_map_line(
+                pose[0], pose[1], x_wall[i], y_wall[i], -3.0)
+
+            self.grid.add_map_line(
+                x_bef[i], y_bef[i], x_aft[i], y_aft[i], prob)
+
+        self.grid.occupancy_map = np.clip(
+            self.grid.occupancy_map, MIN_LOG_PROB, MAX_LOG_PROB)
+
+        self.grid.display_cv(pose)

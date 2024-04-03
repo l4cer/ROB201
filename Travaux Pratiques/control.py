@@ -58,9 +58,33 @@ def potential_field_control(lidar, current_pose, goal_pose):
     robot (x,y) frame (centered on robot, x forward, y on left) or in odom (centered / aligned
     on initial pose, x forward, y on left)
     """
-    # TODO for TP2
 
-    command = {"forward": 0,
-               "rotation": 0}
+    K = 10.0
+    D_SAFE = 0.5
 
-    return command
+    angles = lidar.get_ray_angles()
+    distances = lidar.get_sensor_values()
+
+    delta = goal_pose[:2] - current_pose[:2]
+    norm = np.linalg.norm(delta)
+
+    grad = K * delta / norm
+
+    index = np.argmin(distances)
+    angle_min, dist_min = angles[index], distances[index]
+
+    target = dist_min * np.array([np.cos(angle_min), np.sin(angle_min)])
+
+    grad += (K / dist_min**3) * (1.0 / dist_min - 1.0 / D_SAFE) * target
+
+    error = np.arctan2(grad[1], grad[0]) - current_pose[2]
+
+    if np.abs(error) < 0.01:
+        speed = np.clip(0.03 * np.linalg.norm(grad), -1.0, 1.0)
+        rotation = 0.0
+
+    else:
+        speed = 0.0
+        rotation = np.clip(0.2 * error, -1.0, 1.0)
+
+    return {"forward": speed, "rotation": rotation}
