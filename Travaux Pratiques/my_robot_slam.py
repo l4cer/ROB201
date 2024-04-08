@@ -55,7 +55,11 @@ class MyRobotSlam(RobotAbstract):
         Main control function executed at each time step
         """
 
-        self.tiny_slam.update_map(self.lidar(), self.odometer_values())
+        score = self.tiny_slam.localise(self.lidar(), self.odometer_values())
+        self.corrected_pose = self.tiny_slam.get_corrected_pose(self.odometer_values())
+
+        if score > 150.0:
+            self.tiny_slam.update_map(self.lidar(), self.corrected_pose)
 
         return self.control_tp2()
 
