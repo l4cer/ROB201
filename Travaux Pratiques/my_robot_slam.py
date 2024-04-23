@@ -45,9 +45,9 @@ class MyRobotSlam(RobotAbstract):
 
         self.waypoints_index = 0
         self.waypoints = [
-            [400,    0, -0.5 * np.pi],
-            [400, -220, -1.0 * np.pi],
-            [200, -220, -1.5 * np.pi]
+            [0, 1, 0],
+            [0, 1, 0],
+            [0, 1, 0]
         ]
 
     def control(self):
@@ -60,6 +60,8 @@ class MyRobotSlam(RobotAbstract):
 
         if score > 150.0:
             self.tiny_slam.update_map(self.lidar(), self.corrected_pose)
+
+        self.path = self.planner.plan(self.corrected_pose, self.waypoints[self.waypoints_index])
 
         return self.control_tp2()
 
@@ -77,7 +79,8 @@ class MyRobotSlam(RobotAbstract):
         Control function for TP2
         """
         pose = self.odometer_values()
-        goal = self.waypoints[self.waypoints_index]
+        goal = self.path[1]  #self.waypoints[self.waypoints_index]
+        print(pose, goal)
 
         if np.linalg.norm(goal - pose) < 5.0:
             self.waypoints_index = (self.waypoints_index + 1) % len(self.waypoints)

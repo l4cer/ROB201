@@ -151,5 +151,5 @@ class TinySlam:
         self.grid.occupancy_map = np.clip(
             self.grid.occupancy_map, MIN_LOG_PROB, MAX_LOG_PROB)
 
-        self._score(lidar, pose)
+        #self._score(lidar, pose)
         self.grid.display_cv(pose)
