@@ -5,12 +5,7 @@ import numpy as np
 
 from occupancy_grid import OccupancyGrid
 
-
-WALL_WIDTH = 2.0
-WALL_SPACING = 10.0
-
-MIN_LOG_PROB = -8.0
-MAX_LOG_PROB =  8.0
+from constants import *
 
 
 class TinySlam:
@@ -29,36 +24,21 @@ class TinySlam:
         pose : [x, y, theta] nparray, position of the robot to evaluate, in world coordinates
         """
 
-        angles = lidar.get_ray_angles() + pose[2]
+        angles = lidar.get_ray_angles()
         distances = lidar.get_sensor_values()
 
-        mask = distances < 300.0
+        x_world = pose[0] + distances * np.cos(pose[2] + angles)
+        y_world = pose[1] + distances * np.sin(pose[2] + angles)
 
-        cos, sin = np.cos(angles), np.sin(angles)
+        x_map, y_map = self.grid.conv_world_to_map(x_world, y_world)
 
-        x = (distances * cos + pose[0])[mask]
-        y = (distances * sin + pose[1])[mask]
+        x = np.floor(x_map).astype(int)
+        y = np.floor(y_map).astype(int)
 
-        x = (x - self.grid.x_min_world) / self.grid.resolution
-        y = (y - self.grid.y_min_world) / self.grid.resolution
+        w, h = np.shape(self.grid.occupancy_map)
+        mask = (0 <= x) & (x < w) & (0 <= y) & (y < h)
 
-        x0 = np.floor(x).astype(int)
-        y0 = np.floor(y).astype(int)
-
-        x1 = np.ceil(x).astype(int)
-        y1 = np.ceil(y).astype(int)
-
-        mp00 = self.grid.occupancy_map[x0, y0]
-        mp01 = self.grid.occupancy_map[x0, y1]
-        mp10 = self.grid.occupancy_map[x1, y0]
-        mp11 = self.grid.occupancy_map[x1, y1]
-
-        tmp = np.power(10.0,
-            (y - y0) * ((x - x0) * mp11 + (x1 - x) * mp01) +
-            (y1 - y) * ((x - x0) * mp10 + (x1 - x) * mp00)
-        )
-
-        score = np.sum(tmp / (tmp + 1.0))
+        score = np.sum(self.grid.occupancy_map[x[mask], y[mask]])
 
         return score
 
@@ -74,47 +54,48 @@ class TinySlam:
         if odom_pose_ref is None:
             odom_pose_ref = self.odom_pose_ref
 
-        dist = np.linalg.norm(odom_pose[:2])
         angle = np.arctan2(odom_pose[1], odom_pose[0])
+        distance = np.linalg.norm(odom_pose[:2])
 
         corrected_pose = [
-            odom_pose_ref[0] + dist * np.cos(angle + odom_pose_ref[2]),
-            odom_pose_ref[1] + dist * np.sin(angle + odom_pose_ref[2]),
+            odom_pose_ref[0] + distance * np.cos(odom_pose_ref[2] + angle),
+            odom_pose_ref[1] + distance * np.sin(odom_pose_ref[2] + angle),
             odom_pose_ref[2] + odom_pose[2]
         ]
 
         return corrected_pose
 
-    def localise(self, lidar, raw_odom_pose, N = 50):
+    def localise(self, lidar, raw_odom_pose, N = 125):
         """
         Compute the robot position wrt the map, and updates the odometry reference
         lidar : placebot object with lidar data
         odom : [x, y, theta] nparray, raw odometry position
         """
 
-        best_score = None
-        best_offset = None
+        best_pose_ref = self.odom_pose_ref
+        best_score = self._score(lidar, self.get_corrected_pose(raw_odom_pose))
 
         counter = 0
 
         while counter < N:
-            offset = np.random.normal([0.0, 0.0, 0.0], [3.0, 3.0, 0.01])
+            delta = np.random.normal([0.0, 0.0, 0.0], [5.0, 5.0, 0.15])
+            new_ref = best_pose_ref + delta
 
             corrected = self.get_corrected_pose(
-                raw_odom_pose, odom_pose_ref=offset)
+                raw_odom_pose, odom_pose_ref=new_ref)
 
             score = self._score(lidar, corrected)
 
             if best_score is None or score > best_score:
                 best_score = score
-                best_offset = offset
+                best_pose_ref = new_ref
 
                 counter = 0
 
             else:
                 counter += 1
 
-        self.odom_pose_ref = best_offset
+        self.odom_pose_ref = best_pose_ref
 
         return best_score
 
@@ -125,28 +106,33 @@ class TinySlam:
         pose : [x, y, theta] nparray, corrected pose in world coordinates
         """
 
-        angles = lidar.get_ray_angles() + pose[2]
+        angles = lidar.get_ray_angles()
         distances = lidar.get_sensor_values()
 
-        cos, sin = np.cos(angles), np.sin(angles)
+        cos = np.cos(pose[2] + angles)
+        sin = np.sin(pose[2] + angles)
 
-        x_wall = (distances - WALL_SPACING) * cos + pose[0]
-        y_wall = (distances - WALL_SPACING) * sin + pose[1]
+        x_free_space = pose[0] + (distances - WALL_SPACING) * cos
+        y_free_space = pose[1] + (distances - WALL_SPACING) * sin
 
-        x_bef = (distances - WALL_WIDTH / 2) * cos + pose[0]
-        y_bef = (distances - WALL_WIDTH / 2) * sin + pose[1]
+        x_wall_start = pose[0] + (distances - WALL_WIDTH / 2) * cos
+        y_wall_start = pose[1] + (distances - WALL_WIDTH / 2) * sin
 
-        x_aft = (distances + WALL_WIDTH / 2) * cos + pose[0]
-        y_aft = (distances + WALL_WIDTH / 2) * sin + pose[1]
+        x_wall_end = pose[0] + (distances + WALL_WIDTH / 2) * cos
+        y_wall_end = pose[1] + (distances + WALL_WIDTH / 2) * sin
 
-        prob = np.log10(0.95 / (1.0 - 0.95))
+        for index in range(len(angles)):
+            self.grid.add_map_line(pose[0],
+                                   pose[1],
+                                   x_free_space[index],
+                                   y_free_space[index],
+                                   LOG_PROB_FREE_SPACE)
 
-        for i in range(len(angles)):
-            self.grid.add_map_line(
-                pose[0], pose[1], x_wall[i], y_wall[i], -3.0)
-
-            self.grid.add_map_line(
-                x_bef[i], y_bef[i], x_aft[i], y_aft[i], prob)
+            self.grid.add_map_line(x_wall_start[index],
+                                   y_wall_start[index],
+                                   x_wall_end[index],
+                                   y_wall_end[index],
+                                   LOG_PROB_OCCUPIED)
 
         self.grid.occupancy_map = np.clip(
             self.grid.occupancy_map, MIN_LOG_PROB, MAX_LOG_PROB)

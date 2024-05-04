@@ -55,10 +55,13 @@ class MyRobotSlam(RobotAbstract):
         Main control function executed at each time step
         """
 
+        self.counter += 1
+
         score = self.tiny_slam.localise(self.lidar(), self.odometer_values())
         self.corrected_pose = self.tiny_slam.get_corrected_pose(self.odometer_values())
+        print(score)
 
-        if score > 150.0:
+        if score >= 0.0:
             self.tiny_slam.update_map(self.lidar(), self.corrected_pose)
 
         self.path = self.planner.plan(self.corrected_pose, self.waypoints[self.waypoints_index])
@@ -79,8 +82,7 @@ class MyRobotSlam(RobotAbstract):
         Control function for TP2
         """
         pose = self.odometer_values()
-        goal = self.path[1]  #self.waypoints[self.waypoints_index]
-        print(pose, goal)
+        goal = self.waypoints[self.waypoints_index]
 
         if np.linalg.norm(goal - pose) < 5.0:
             self.waypoints_index = (self.waypoints_index + 1) % len(self.waypoints)
