@@ -3,7 +3,7 @@
 import cv2
 import numpy as np
 
-from occupancy_grid import OccupancyGrid
+from utils import OccupancyGrid
 
 from constants import *
 
@@ -30,15 +30,14 @@ class TinySlam:
         x_world = pose[0] + distances * np.cos(pose[2] + angles)
         y_world = pose[1] + distances * np.sin(pose[2] + angles)
 
-        x_map, y_map = self.grid.conv_world_to_map(x_world, y_world)
+        x_map, y_map = self.grid.world2grid(x_world, y_world)
 
         x = np.floor(x_map).astype(int)
         y = np.floor(y_map).astype(int)
 
-        w, h = np.shape(self.grid.occupancy_map)
-        mask = (0 <= x) & (x < w) & (0 <= y) & (y < h)
+        mask = (0 <= x) & (x < self.grid.size_x) & (0 <= y) & (y < self.grid.size_y)
 
-        score = np.sum(self.grid.occupancy_map[x[mask], y[mask]])
+        score = np.sum(self.grid.occupancy[x[mask], y[mask]])
 
         return score
 
@@ -122,20 +121,20 @@ class TinySlam:
         y_wall_end = pose[1] + (distances + WALL_WIDTH / 2) * sin
 
         for index in range(len(angles)):
-            self.grid.add_map_line(pose[0],
-                                   pose[1],
-                                   x_free_space[index],
-                                   y_free_space[index],
-                                   LOG_PROB_FREE_SPACE)
+            self.grid.increment_line(pose[0],
+                                     pose[1],
+                                     x_free_space[index],
+                                     y_free_space[index],
+                                     LOG_PROB_FREE_SPACE)
 
-            self.grid.add_map_line(x_wall_start[index],
-                                   y_wall_start[index],
-                                   x_wall_end[index],
-                                   y_wall_end[index],
-                                   LOG_PROB_OCCUPIED)
+            self.grid.increment_line(x_wall_start[index],
+                                     y_wall_start[index],
+                                     x_wall_end[index],
+                                     y_wall_end[index],
+                                     LOG_PROB_OCCUPIED)
 
-        self.grid.occupancy_map = np.clip(
-            self.grid.occupancy_map, MIN_LOG_PROB, MAX_LOG_PROB)
+        self.grid.occupancy = np.clip(
+            self.grid.occupancy, MIN_LOG_PROB, MAX_LOG_PROB)
 
         #self._score(lidar, pose)
-        self.grid.display_cv(pose)
+        self.grid.display(pose)

@@ -10,9 +10,8 @@ from place_bot.entities.lidar import LidarParams
 
 from tiny_slam import TinySlam
 
-from control import potential_field_control, reactive_obst_avoid
-from occupancy_grid import OccupancyGrid
-from planner import Planner
+from control import potential_field_control, reactive_obst_avoid, Planner
+from utils import OccupancyGrid
 
 
 # Definition of our robot controller
@@ -33,8 +32,8 @@ class MyRobotSlam(RobotAbstract):
         # Init SLAM object
         self._size_area = (800, 800)
         self.occupancy_grid = OccupancyGrid(x_min=-self._size_area[0],
-                                            x_max= self._size_area[0],
                                             y_min=-self._size_area[1],
+                                            x_max= self._size_area[0],
                                             y_max= self._size_area[1],
                                             resolution=2)
         self.tiny_slam = TinySlam(self.occupancy_grid)
@@ -55,16 +54,16 @@ class MyRobotSlam(RobotAbstract):
         Main control function executed at each time step
         """
 
-        self.counter += 1
-
         score = self.tiny_slam.localise(self.lidar(), self.odometer_values())
         self.corrected_pose = self.tiny_slam.get_corrected_pose(self.odometer_values())
         print(score)
 
-        if score >= 0.0:
+        if self.counter == 0 or score > 50.0:
             self.tiny_slam.update_map(self.lidar(), self.corrected_pose)
 
         self.path = self.planner.plan(self.corrected_pose, self.waypoints[self.waypoints_index])
+
+        self.counter += 1
 
         return self.control_tp2()
 
