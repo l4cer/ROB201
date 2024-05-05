@@ -59,25 +59,25 @@ def get_neighbors(grid: Grid, curr: Tuple[int, int]) -> List[Tuple[int, int]]:
     return neighbors
 
 
-def dilate_walls(grid: Grid) -> np.ndarray:
+def erode_free_space(grid: Grid) -> np.ndarray:
     """
-    Dilates the walls to avoid robot collision during planning.
+    Erodes free space to avoid robot collision during planning.
 
     Args:
         grid (Grid): single instance of the Grid class.
 
     Returns:
-        np.ndarray: occupancy mask with walls dilated.
+        np.ndarray: occupancy mask with free space eroded.
     """
 
-    occupancy: np.ndarray = grid.occupancy > 0.6 * MAX_LOG_PROB
-    occupancy = (255 * occupancy).astype(np.uint8)
+    free_space: np.ndarray = grid.occupancy < 0.8 * MIN_LOG_PROB
+    free_space = (255 * free_space).astype(np.uint8)
 
-    kernel: np.ndarray = cv.getStructuringElement(cv.MORPH_ELLIPSE, (7, 7))
+    kernel: np.ndarray = cv.getStructuringElement(cv.MORPH_ELLIPSE, (19, 19))
 
-    occupancy = cv.dilate(occupancy, kernel)
+    free_space = cv.erode(free_space, kernel)
 
-    return occupancy
+    return free_space > 0
 
 
 def plan(grid: Grid, init: np.ndarray, goal: np.ndarray) -> np.ndarray:
@@ -109,7 +109,7 @@ def plan(grid: Grid, init: np.ndarray, goal: np.ndarray) -> np.ndarray:
 
     closed_set: set = set()
 
-    occupancy: np.ndarray = dilate_walls(grid)
+    free_space: np.ndarray = erode_free_space(grid)
 
     while len(open_set) > 0:
         min_f: Union[None, float] = None
@@ -129,7 +129,7 @@ def plan(grid: Grid, init: np.ndarray, goal: np.ndarray) -> np.ndarray:
             break
 
         for neigh in get_neighbors(grid, curr):
-            if neigh in closed_set or occupancy[neigh[0], neigh[1]]:
+            if neigh in closed_set or not free_space[neigh[0], neigh[1]]:
                 continue
 
             new_g: float = g[curr[0], curr[1]] + heuristic(curr, neigh)
@@ -203,7 +203,7 @@ class Controller:
         self.lidar: Lidar = lidar
 
         self.exploring: bool = True
-        self.explore_counter: int = 0
+        self.exploration_counter: int = 0
 
         self.goal: Union[None, np.ndarray] = None
         self.traj: Union[None, np.ndarray] = None
@@ -217,29 +217,30 @@ class Controller:
         """
 
         if self.goal is None or np.linalg.norm(pose[:2] - self.goal) < 10.0:
-            distances: np.ndarray = self.lidar.get_sensor_values()
+            free_space: np.ndarray = erode_free_space(self.grid)
 
-            mask: np.ndarray = MIN_DIST_TO_EXPLORE <= distances
-            index: int = np.random.choice(np.arange(len(distances))[mask])
+            while True:
+                x: int = np.random.randint(0, self.grid.size_x)
+                y: int = np.random.randint(0, self.grid.size_y)
 
-            angle: float = self.lidar.get_ray_angles()[index]
-            distance: float = 0.5 * distances[index]
+                if not free_space[x, y]:
+                    continue
 
-            if self.goal is not None:
-                self.explore_counter += 1
+                if self.goal is not None:
+                    self.exploration_counter += 1
 
-            self.goal = np.array([
-                pose[0] + distance * np.cos(pose[2] + angle),
-                pose[1] + distance * np.sin(pose[2] + angle)
-            ])
+                    print("Exploration counter: {}/{}".format(
+                        self.exploration_counter, MAX_EXPLORATION_COUNTER))
 
-            if self.explore_counter > 5:
+                self.goal = np.array([*self.grid.grid2world(x, y)])
+                break
+
+            if self.exploration_counter >= MAX_EXPLORATION_COUNTER:
                 self.exploring = False
 
                 self.goal = np.array([0.0, 0.0])
 
             self.traj = plan(self.grid, pose, self.goal)
-            print(self.traj)
 
     def get_command(self, pose: np.ndarray) -> Dict[str, float]:
         """

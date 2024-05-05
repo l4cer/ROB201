@@ -10,6 +10,7 @@ from my_robot import MyRobot
 
 if __name__ == "__main__":
     lidar_params: LidarParams = LidarParams()
+    lidar_params.max_range = 1000
     lidar_params.noise_enable = True
 
     odometer_params: OdometerParams = OdometerParams()

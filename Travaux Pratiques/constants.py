@@ -61,10 +61,13 @@ LOG_PROB_OCCUPIED: float = log_prob(0.95)
 
 SCORE_MIN: float = 50.0
 
-MIN_DIST_TO_EXPLORE: float = 200.0  # cm
+# Determines how many new points to explore before returning to the origin
+MAX_EXPLORATION_COUNTER: int = 15
 
-LOOKAHEAD: int = 10
+# Lookahead distance in pixels to follow the calculated path
+LOOKAHEAD: int = 15
 
+# Threshold for switching between longitudinal and rotational control
 THRESHOLD: float = np.deg2rad(5)  # rad
 
 KP_FORWARD: float = 0.02
