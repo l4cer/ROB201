@@ -1,201 +1,271 @@
-""" A set of robotics control functions """
+import cv2 as cv
 
-import random
-import numpy as np
+from typing import Dict, List, Tuple, Union
 
-from scipy.signal import convolve
+from place_bot.entities.lidar import Lidar
 
 from grid import Grid
 
-KP_SPEED = 0.001
-KP_ROTATION = 0.2
+from constants import *
 
-FOV = np.deg2rad(240)
-KERNEL = np.ones(61)
 
-prev_target = 0.0
+def heuristic(curr: Tuple[int, int], goal: Tuple[int, int]) -> float:
+    """
+    Calculates the cost between two points using some specific heuristic.
+    In this case, the heuristic is precisely the Euclidean distance.
+
+    Args:
+        curr (Tuple[int, int]): curr position [x, y] in grid frame.
+        goal (Tuple[int, int]): goal position [x, y] in grid frame.
+
+    Returns:
+        float: associated cost between these two points.
+    """
+
+    dx: float = float(curr[0] - goal[0])
+    dy: float = float(curr[1] - goal[1])
+
+    h: float = np.sqrt(dx**2 + dy**2)
+
+    return h
+
+
+def get_neighbors(grid: Grid, curr: Tuple[int, int]) -> List[Tuple[int, int]]:
+    """
+    Gets valid neighbors of current node using 8-connexity.
+
+    Args:
+        grid (Grid): single instance of the Grid class.
+        curr (Tuple[int, int]): curr position [x, y] in grid frame.
+
+    Returns:
+        List[Tuple[int, int]]: list of neighbors using 8-connexity.
+    """
+
+    neighbors: List[Tuple[int, int]] = []
+
+    for dx, dy in [(-1,  1), ( 0,  1), ( 1,  1),
+                   (-1,  0),           ( 1,  0),
+                   (-1, -1), ( 0, -1), ( 1, -1)]:
+
+        x: int = int(curr[0] + dx)
+        y: int = int(curr[1] + dy)
+
+        if x < 0 or grid.size_x <= x or y < 0 or grid.size_y <= y:
+            continue
+
+        neighbors.append((x, y))
+
+    return neighbors
+
+
+def dilate_walls(grid: Grid) -> np.ndarray:
+    """
+    Dilates the walls to avoid robot collision during planning.
+
+    Args:
+        grid (Grid): single instance of the Grid class.
+
+    Returns:
+        np.ndarray: occupancy mask with walls dilated.
+    """
+
+    occupancy: np.ndarray = grid.occupancy > 0.6 * MAX_LOG_PROB
+    occupancy = (255 * occupancy).astype(np.uint8)
+
+    kernel: np.ndarray = cv.getStructuringElement(cv.MORPH_ELLIPSE, (7, 7))
+
+    occupancy = cv.dilate(occupancy, kernel)
+
+    return occupancy
+
+
+def plan(grid: Grid, init: np.ndarray, goal: np.ndarray) -> np.ndarray:
+    """
+    Computes a path using the A* algorithm,
+    recomputes plan if init or goal changes.
+
+    Args:
+        grid (Grid): single instance of the Grid class.
+        init (np.ndarray): init pose [x, y, theta] in world frame (theta unused).
+        goal (np.ndarray): goal pose [x, y, theta] in world frame (theta unused).
+
+    Returns:
+        np.ndarray: path in world frame from init point to goal point.
+    """
+
+    init: Tuple[int, int] = grid.world2grid(init[0], init[1])
+    goal: Tuple[int, int] = grid.world2grid(goal[0], goal[1])
+
+    shape: Tuple[int, int] = (grid.size_x, grid.size_y)
+    parent: np.ndarray = np.zeros((*shape, 2))
+
+    g: np.ndarray = np.zeros(shape)
+    f: np.ndarray = np.inf * np.ones(shape)
+    f[init[0], init[1]] = heuristic(init, goal)
+
+    open_set: set = set()
+    open_set.add(init)
+
+    closed_set: set = set()
+
+    occupancy: np.ndarray = dilate_walls(grid)
+
+    while len(open_set) > 0:
+        min_f: Union[None, float] = None
+        curr: Union[None, Tuple[int, int]] = None
+
+        for node in open_set:
+            cost: float = f[node[0], node[1]]
+
+            if min_f is None or cost < min_f:
+                curr = node
+                min_f = cost
+
+        open_set.remove(curr)
+        closed_set.add(curr)
+
+        if heuristic(curr, goal) == 0.0:
+            break
+
+        for neigh in get_neighbors(grid, curr):
+            if neigh in closed_set or occupancy[neigh[0], neigh[1]]:
+                continue
+
+            new_g: float = g[curr[0], curr[1]] + heuristic(curr, neigh)
+
+            if new_g < g[neigh[0], neigh[1]] or neigh not in open_set:
+                g[neigh[0], neigh[1]] = new_g
+                f[neigh[0], neigh[1]] = new_g + heuristic(neigh, goal)
+
+                parent[neigh[0], neigh[1]] = curr
+
+                if neigh not in open_set:
+                    open_set.add(neigh)
+
+    curr: List[int, int] = goal
+    path: List[List[float, float]] = []
+
+    while heuristic(curr, init) > 0:
+        path.append(grid.grid2world(curr[0], curr[1]))
+        curr = parent[curr[0], curr[1]].astype(int)
+
+        if np.linalg.norm(parent[curr[0], curr[1]]) == 0.0:
+            break
+
+    return np.asarray(path[::-1])
+
+
+def separate_control(pose: np.ndarray, goal: np.ndarray) -> Dict[str, float]:
+    """
+    Controls actuators separately.
+
+    Args:
+        pose (np.ndarray): robot pose [x, y, theta] in map frame.
+        goal (np.ndarray): goal position [x, y] in map frame.
+
+    Returns:
+        Dict[str, float]: dictionary with the respective actuator commands.
+    """
+
+    command: Dict[str, float] = {"forward": 0.0, "rotation": 0.0}
+
+    delta: np.ndarray = goal - pose[:2]
+
+    angle: float = np.arctan2(delta[1], delta[0]) - pose[2]
+    distance: float = np.linalg.norm(delta)
+
+    angle = angle % TAU
+    angle = angle - TAU if angle > PI else angle
+
+    if np.abs(angle) < THRESHOLD:
+        command["forward"] = np.clip(KP_FORWARD * distance, -1.0, 1.0)
+    else:
+        command["rotation"] = np.clip(KP_ROTATION * angle, -1.0, 1.0)
+
+    return command
 
 
 class Controller:
-    """Simple occupancy grid Planner"""
+    """Simple controller with path planning and path following"""
 
-    def __init__(self, occupancy_grid: Grid, lidar):
-        self.grid = occupancy_grid
-        self.lidar = lidar
-
-        # Origin of the odom frame in the map frame
-        self.odom_pose_ref = np.array([0, 0, 0])
-
-    def compute_h(self, curr, goal):
-        dx = curr[0] - goal[0]
-        dy = curr[1] - goal[1]
-
-        return np.sqrt(dx**2 + dy**2)
-
-    def get_neighbors(self, pos):
-        neighbors = []
-
-        for dx, dy in [(0,1),(0,-1),(1,0),(-1,0),(1,1),(1,-1),(-1,1),(-1,-1)]:
-            x = pos[0] + dx
-            y = pos[1] + dy
-
-            if x < 0 or x >= self.grid.size_x:
-                continue
-
-            if y < 0 or y >= self.grid.size_y:
-                continue
-
-            neighbors.append([x, y])
-
-        return np.asarray(neighbors) if len(neighbors) > 0 else np.zeros((2, 0))
-
-    def plan(self, start, goal):
+    def __init__(self, grid: Grid, lidar: Lidar) -> None:
         """
-        Compute a path using A*, recompute plan if start or goal change
-        start : [x, y, theta] nparray, start pose in world coordinates (theta unused)
-        goal : [x, y, theta] nparray, goal pose in world coordinates (theta unused)
+        Constructor of the Controller class.
+
+        Args:
+            grid (Grid): single instance of the Grid class.
+            lidar (Lidar): single instance of the Lidar class.
         """
 
-        start = self.grid.world2grid(start[0], start[1])
-        goal = self.grid.world2grid(goal[0], goal[1])
-        
-        shape = np.shape(self.grid.occupancy)
-        parent = np.zeros((shape[0], shape[1], 2))
+        self.grid: Grid = grid
 
-        g = np.zeros(shape)
-        f = np.inf * np.ones(shape)
-        f[start[0], start[1]] = self.compute_h(start, goal)
+        self.lidar: Lidar = lidar
 
-        open_set = set()
-        closed_set = set()
-        open_set.add(start)
+        self.exploring: bool = True
+        self.explore_counter: int = 0
 
-        while len(open_set) > 0:
-            #print(len(open_set), len(closed_set))
-            min_f = None
-            curr = None
+        self.goal: Union[None, np.ndarray] = None
+        self.traj: Union[None, np.ndarray] = None
 
-            for node in open_set:
-                cost = f[node[0], node[1]]
+    def explore(self, pose: np.ndarray) -> None:
+        """
+        Frontier based exploration.
 
-                if min_f is None or cost < min_f:
-                    curr = node
-                    min_f = cost
+        Args:
+            pose (np.ndarray): robot pose [x, y, theta] in map frame.
+        """
 
-            open_set.remove(curr)
-            closed_set.add(curr)
+        if self.goal is None or np.linalg.norm(pose[:2] - self.goal) < 10.0:
+            distances: np.ndarray = self.lidar.get_sensor_values()
 
-            if self.compute_h(curr, goal) == 0.0:
-                break
+            mask: np.ndarray = MIN_DIST_TO_EXPLORE <= distances
+            index: int = np.random.choice(np.arange(len(distances))[mask])
 
-            for neigh in self.get_neighbors(curr):
-                neigh = (int(neigh[0]), int(neigh[1]))
+            angle: float = self.lidar.get_ray_angles()[index]
+            distance: float = 0.5 * distances[index]
 
-                if self.grid.occupancy[neigh[0], neigh[1]] > 2.0 or neigh in closed_set:
-                    continue
-                
-                new_g = g[curr[0], curr[1]] + self.compute_h(curr, neigh)
+            if self.goal is not None:
+                self.explore_counter += 1
 
-                if new_g < g[neigh[0], neigh[1]] or neigh not in open_set:
-                    g[neigh[0], neigh[1]] = new_g
-                    f[neigh[0], neigh[1]] = new_g + self.compute_h(neigh, goal)
-                    parent[neigh[0], neigh[1]] = curr
+            self.goal = np.array([
+                pose[0] + distance * np.cos(pose[2] + angle),
+                pose[1] + distance * np.sin(pose[2] + angle)
+            ])
 
-                    if neigh not in open_set:
-                        open_set.add(neigh)
+            if self.explore_counter > 5:
+                self.exploring = False
 
-        path = []
-        curr = goal
+                self.goal = np.array([0.0, 0.0])
 
-        while self.compute_h(curr, start) > 0:
-            path.append([*self.grid.grid2world(*curr), 0])
-            curr = parent[curr[0], curr[1]].astype(int)
+            self.traj = plan(self.grid, pose, self.goal)
+            print(self.traj)
 
-            if np.linalg.norm(parent[curr[0], curr[1]]) == 0.0:
-                break
+    def get_command(self, pose: np.ndarray) -> Dict[str, float]:
+        """
+        Calculates commands to control the robot.
 
-        return path[::-1]
+        Args:
+            pose (np.ndarray): robot pose [x, y, theta] in map frame.
 
-    def explore_frontiers(self):
-        """ Frontier based exploration """
-        goal = np.array([0, 0, 0])  # frontier to reach for exploration
-        return goal
+        Returns:
+            Dict[str, float]: dictionary with the respective actuator commands.
+        """
 
-    def get_command(self, pose) -> None:
-        return {"forward": 0.2, "rotation": 0.0}
+        if self.exploring:
+            self.explore(pose)
 
+        delta: np.ndarray = self.traj - pose[:2]
+        squared_norms: np.ndarray = np.einsum("ij,ij->i", delta, delta)
 
+        index: int = np.clip(
+            np.argmin(squared_norms) + LOOKAHEAD, 0, len(self.traj) - 1)
 
-def reactive_obst_avoid(lidar):
-    """
-    Simple obstacle avoidance
-    lidar : placebot object with lidar data
-    """
+        command: Dict[str, float] = {"forward": 0.0, "rotation": 0.0}
 
-    global prev_target
+        dist2origin: float = np.linalg.norm(pose[:2] - self.traj[index])
 
-    angles = lidar.get_ray_angles()
-    distances = lidar.get_sensor_values()
+        if self.exploring or dist2origin > 5.0:
+            command = separate_control(pose, self.traj[index])
 
-    in_fov = (angles < 0.5 * FOV) & (-0.5 * FOV < angles)
-
-    index = np.argmax(convolve(distances[in_fov], KERNEL, mode="same"))
-
-    target = angles[in_fov][index]
-    dfront = distances[in_fov][index]
-
-    delta = np.abs(target - prev_target)
-
-    if np.abs(target) < np.deg2rad(5.0) and delta < np.deg2rad(5.0):
-        speed = np.clip(KP_SPEED * dfront, -1.0, 1.0)
-        rotation = 0.0
-
-    else:
-        speed = 0.0
-        rotation = np.clip(KP_ROTATION * target, -1.0, 1.0)
-
-    prev_target = target
-
-    return {"forward": speed, "rotation": rotation}
-
-
-def potential_field_control(lidar, current_pose, goal_pose):
-    """
-    Control using potential field for goal reaching and obstacle avoidance
-    lidar : placebot object with lidar data
-    current_pose : [x, y, theta] nparray, current pose in odom or world frame
-    goal_pose : [x, y, theta] nparray, target pose in odom or world frame
-    Notes: As lidar and odom are local only data, goal and gradient will be defined either in
-    robot (x,y) frame (centered on robot, x forward, y on left) or in odom (centered / aligned
-    on initial pose, x forward, y on left)
-    """
-
-    K = 10.0
-    D_SAFE = 0.5
-
-    angles = lidar.get_ray_angles()
-    distances = lidar.get_sensor_values()
-
-    delta = goal_pose[:2] - current_pose[:2]
-    norm = np.linalg.norm(delta)
-
-    grad = K * delta / norm
-
-    index = np.argmin(distances)
-    angle_min, dist_min = angles[index], distances[index]
-
-    target = dist_min * np.array([np.cos(angle_min), np.sin(angle_min)])
-
-    grad += (K / dist_min**3) * (1.0 / dist_min - 1.0 / D_SAFE) * target
-
-    error = np.arctan2(grad[1], grad[0]) - current_pose[2]
-
-    if np.abs(error) < 0.01:
-        speed = np.clip(0.03 * np.linalg.norm(grad), -1.0, 1.0)
-        rotation = 0.0
-
-    else:
-        speed = 0.0
-        rotation = np.clip(0.2 * error, -1.0, 1.0)
-
-    return {"forward": speed, "rotation": rotation}
+        return command

@@ -1,6 +1,10 @@
 import numpy as np
 
 
+PI: float = np.pi
+TAU: float = 2.0 * np.pi
+
+
 #===================================================#
 #                                                   #
 #             Occupancy grid parameters             #
@@ -56,3 +60,12 @@ LOG_PROB_OCCUPIED: float = log_prob(0.95)
 #===================================================#
 
 SCORE_MIN: float = 50.0
+
+MIN_DIST_TO_EXPLORE: float = 200.0  # cm
+
+LOOKAHEAD: int = 10
+
+THRESHOLD: float = np.deg2rad(5)  # rad
+
+KP_FORWARD: float = 0.02
+KP_ROTATION: float = 0.5

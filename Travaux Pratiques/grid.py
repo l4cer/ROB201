@@ -211,7 +211,8 @@ class Grid:
 
         if traj is not None:
             traj_x, traj_y = self.world2grid(traj[:, 0], -traj[:, 1])
-            points: np.ndarray = np.vstack((traj_x, traj_y))
+            points: np.ndarray = np.hstack(
+                (traj_x[:, np.newaxis], traj_y[:, np.newaxis]))
 
             for i in range(len(traj_x) - 1):
                 cv.line(img, points[i], points[i+1], (180, 180, 180), 2)

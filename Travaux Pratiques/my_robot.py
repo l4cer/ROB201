@@ -73,7 +73,8 @@ class MyRobot(RobotAbstract):
 
             command = self.controller.get_command(self.pose)
 
-        self.grid.display(self.pose)
+        self.grid.display(
+            self.pose, goal=self.controller.goal, traj=self.controller.traj)
 
         self.counter += 1
 
