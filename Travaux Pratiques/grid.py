@@ -227,5 +227,5 @@ class Grid:
             -pose[1] - 20.0 * np.sin(pose[2]))
 
         cv.arrowedLine(img, point1, point2, (0, 0, 255), thickness=2)
-        cv.imshow("Occupancy grid", img)
+        cv.imshow("SLAM map", img)
         cv.waitKey(1)
