@@ -1,8 +1,6 @@
-import numpy as np
-
 from place_bot.entities.lidar import Lidar
 
-from utils import Grid
+from grid import Grid
 
 from constants import *
 

@@ -1,19 +1,18 @@
-import numpy as np
+from typing import Dict
 
 from place_bot.entities.robot_abstract import RobotAbstract
 
 from place_bot.entities.lidar import LidarParams
 from place_bot.entities.odometer import OdometerParams
 
-from tiny_slam import TinySlam
+from grid import Grid
 
-from control import potential_field_control, reactive_obst_avoid, Planner
-from utils import Grid
+from tiny_slam import TinySlam
+from controller import Controller
 
 from constants import *
 
 
-# Definition of our robot controller
 class MyRobot(RobotAbstract):
     """A robot controller including SLAM, path planning and path following"""
 
@@ -22,13 +21,20 @@ class MyRobot(RobotAbstract):
         odometer_params: OdometerParams = OdometerParams()
     ) -> None:
 
+        """
+        Constructor of the MyRobot class.
+
+        Args:
+            lidar_params (LidarParams, optional): parameters that
+            characterize the lidar sensor. Defaults to LidarParams().
+            odometer_params (OdometerParams, optional): parameters to
+            describe odometry process. Defaults to OdometerParams().
+        """
+
         # Passing parameter to parent class
         super().__init__(should_display_lidar=False,
                          lidar_params=lidar_params,
                          odometer_params=odometer_params)
-
-        # Step counter to deal with init and display
-        self.counter: int = 0
 
         self.grid: Grid = Grid(GRID_X_MIN,
                                GRID_Y_MIN,
@@ -36,42 +42,39 @@ class MyRobot(RobotAbstract):
                                GRID_X_MAX,
                                GRID_RESOLUTION)
 
-        self.tiny_slam = TinySlam(self.grid, self.lidar())
-        self.planner = Planner(self.grid)
+        self.tiny_slam: TinySlam = TinySlam(self.grid, self.lidar())
+        self.controller: Controller = Controller(self.grid, self.lidar())
 
         self.pose: np.ndarray = np.array([0.0, 0.0, 0.0])
 
-        self.waypoints_index = 0
-        self.waypoints = [
-            [0, 1, 0],
-            [0, 1, 0],
-            [0, 1, 0]
-        ]
+        # Step counter to deal with init and display
+        self.counter: int = 0
 
-    def control(self):
+    def control(self) -> Dict[str, float]:
         """
-        Main control function executed at each time step
+        Main control function executed at each time step.
+
+        Returns:
+            Dict[str, float]: command for the robot's actuators
+            in the format {"forward": float, "rotation": float}.
         """
 
         score: float = self.tiny_slam.localise(self.odometer_values())
         self.pose = self.tiny_slam.get_corrected_pose(self.odometer_values())
 
-        self.grid.display(self.pose)
+        command: Dict[str, float] = {"forward": 0.0, "rotation": 0.0}
 
-        if self.counter == 0 or score > 50.0:
+        if self.counter < 50:
             self.tiny_slam.update_map(self.pose)
 
-        self.path = self.planner.plan(self.pose, self.waypoints[self.waypoints_index])
+        else:
+            if score > SCORE_MIN:
+                self.tiny_slam.update_map(self.pose)
+
+            command = self.controller.get_command(self.pose)
+
+        self.grid.display(self.pose)
 
         self.counter += 1
-
-        goal = self.waypoints[self.waypoints_index]
-
-        if np.linalg.norm(goal - self.pose) < 5.0:
-            self.waypoints_index = (self.waypoints_index + 1) % len(self.waypoints)
-            self.waypoints_index = int(self.waypoints_index)
-
-        # Compute new command speed to perform obstacle avoidance
-        command = potential_field_control(self.lidar(), self.pose, goal)
 
         return command

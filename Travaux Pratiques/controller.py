@@ -5,7 +5,7 @@ import numpy as np
 
 from scipy.signal import convolve
 
-from utils import Grid
+from grid import Grid
 
 KP_SPEED = 0.001
 KP_ROTATION = 0.2
@@ -16,11 +16,12 @@ KERNEL = np.ones(61)
 prev_target = 0.0
 
 
-class Planner:
+class Controller:
     """Simple occupancy grid Planner"""
 
-    def __init__(self, occupancy_grid: Grid):
+    def __init__(self, occupancy_grid: Grid, lidar):
         self.grid = occupancy_grid
+        self.lidar = lidar
 
         # Origin of the odom frame in the map frame
         self.odom_pose_ref = np.array([0, 0, 0])
@@ -119,6 +120,9 @@ class Planner:
         """ Frontier based exploration """
         goal = np.array([0, 0, 0])  # frontier to reach for exploration
         return goal
+
+    def get_command(self, pose) -> None:
+        return {"forward": 0.2, "rotation": 0.0}
 
 
 

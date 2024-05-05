@@ -47,3 +47,12 @@ def log_prob(prob: float) -> float:
 
 LOG_PROB_VACANT: float = log_prob(0.05)
 LOG_PROB_OCCUPIED: float = log_prob(0.95)
+
+
+#===================================================#
+#                                                   #
+#               Controller parameters               #
+#                                                   #
+#===================================================#
+
+SCORE_MIN: float = 50.0
