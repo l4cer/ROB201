@@ -5,7 +5,7 @@ import numpy as np
 
 from scipy.signal import convolve
 
-from utils import OccupancyGrid
+from utils import Grid
 
 KP_SPEED = 0.001
 KP_ROTATION = 0.2
@@ -19,7 +19,7 @@ prev_target = 0.0
 class Planner:
     """Simple occupancy grid Planner"""
 
-    def __init__(self, occupancy_grid: OccupancyGrid):
+    def __init__(self, occupancy_grid: Grid):
         self.grid = occupancy_grid
 
         # Origin of the odom frame in the map frame

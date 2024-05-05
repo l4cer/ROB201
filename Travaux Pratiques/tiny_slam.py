@@ -1,131 +1,162 @@
-""" A simple robotics navigation code including SLAM, exploration, planning"""
-
-import cv2
 import numpy as np
 
-from utils import OccupancyGrid
+from place_bot.entities.lidar import Lidar
+
+from utils import Grid
 
 from constants import *
 
 
 class TinySlam:
-    """Simple occupancy grid SLAM"""
+    """Simple tiny SLAM object"""
 
-    def __init__(self, occupancy_grid: OccupancyGrid):
-        self.grid = occupancy_grid
-
-        # Origin of the odom frame in the map frame
-        self.odom_pose_ref = np.array([0, 0, 0])
-
-    def _score(self, lidar, pose):
+    def __init__(self, grid: Grid, lidar: Lidar) -> None:
         """
-        Computes the sum of log probabilities of laser end points in the map
-        lidar : placebot object with lidar data
-        pose : [x, y, theta] nparray, position of the robot to evaluate, in world coordinates
+        Constructor of the TinySlam class.
+
+        Args:
+            grid (Grid): single instance of the Grid class.
+            lidar (Lidar): single instance of the Lidar class.
         """
 
-        angles = lidar.get_ray_angles()
-        distances = lidar.get_sensor_values()
+        self.grid: Grid = grid
 
-        x_world = pose[0] + distances * np.cos(pose[2] + angles)
-        y_world = pose[1] + distances * np.sin(pose[2] + angles)
+        self.lidar: Lidar = lidar
 
-        x_map, y_map = self.grid.world2grid(x_world, y_world)
+        # Origin of the odometry frame in the map frame
+        self.odom_origin: np.ndarray = np.array([0.0, 0.0, 0.0])
 
-        x = np.floor(x_map).astype(int)
-        y = np.floor(y_map).astype(int)
+    def score(self, pose: np.ndarray) -> float:
+        """
+        Computes the sum of log probabilities of laser end points in the map.
 
-        mask = (0 <= x) & (x < self.grid.size_x) & (0 <= y) & (y < self.grid.size_y)
+        Args:
+            pose (np.ndarray): robot pose in format [x, y, theta].
 
-        score = np.sum(self.grid.occupancy[x[mask], y[mask]])
+        Returns:
+            float: sum of log probabilities of laser end points in the map.
+        """
+
+        angles: np.ndarray = self.lidar.get_ray_angles()
+        distances: np.ndarray = self.lidar.get_sensor_values()
+
+        x_world: np.ndarray = pose[0] + distances * np.cos(pose[2] + angles)
+        y_world: np.ndarray = pose[1] + distances * np.sin(pose[2] + angles)
+
+        x_grid, y_grid = self.grid.world2grid(x_world, y_world)
+
+        mask_x: np.ndarray = (0 <= x_grid) & (x_grid < self.grid.size_x)
+        mask_y: np.ndarray = (0 <= y_grid) & (y_grid < self.grid.size_y)
+
+        mask: np.ndarray = mask_x & mask_y
+
+        score: float = np.sum(self.grid.occupancy[x_grid[mask], y_grid[mask]])
 
         return score
 
-    def get_corrected_pose(self, odom_pose, odom_pose_ref=None):
+    def get_corrected_pose(self,
+        odom_pose: np.ndarray,
+        odom_origin: np.ndarray = None
+    ) -> np.ndarray:
+
         """
-        Compute corrected pose in map frame from raw odom pose + odom frame pose,
-        either given as second param or using the ref from the object
-        odom : raw odometry position
-        odom_pose_ref : optional, origin of the odom frame if given,
-                        use self.odom_pose_ref if not given
+        Calculates the corrected pose in the map frame from the
+        raw odometry pose and the odometry frame origin, provided
+        as a second parameter or using the origin from the object.
+
+        Args:
+            odom_pose (np.ndarray): robot pose [x, y, theta] in odometry frame.
+            odom_origin (np.ndarray, optional): pose [x, y, theta] of
+            the odometry frame origin in map frame. Defaults to None.
+
+        Returns:
+            np.ndarray: corrected robot pose in the map frame.
         """
 
-        if odom_pose_ref is None:
-            odom_pose_ref = self.odom_pose_ref
+        if odom_origin is None:
+            odom_origin = self.odom_origin
 
-        angle = np.arctan2(odom_pose[1], odom_pose[0])
-        distance = np.linalg.norm(odom_pose[:2])
+        angle: float = np.arctan2(odom_pose[1], odom_pose[0])
+        distance: float = np.linalg.norm(odom_pose[:2])
 
-        corrected_pose = [
-            odom_pose_ref[0] + distance * np.cos(odom_pose_ref[2] + angle),
-            odom_pose_ref[1] + distance * np.sin(odom_pose_ref[2] + angle),
-            odom_pose_ref[2] + odom_pose[2]
-        ]
+        corrected_pose: np.ndarray = np.array([
+            odom_origin[0] + distance * np.cos(odom_origin[2] + angle),
+            odom_origin[1] + distance * np.sin(odom_origin[2] + angle),
+            odom_origin[2] + odom_pose[2]
+        ])
 
         return corrected_pose
 
-    def localise(self, lidar, raw_odom_pose, N = 125):
+    def localise(self, odom_pose: np.ndarray, max_iter: int = 150) -> float:
         """
-        Compute the robot position wrt the map, and updates the odometry reference
-        lidar : placebot object with lidar data
-        odom : [x, y, theta] nparray, raw odometry position
+        Calculates the robot's position in relation to the
+        map and updates the origin of the odometry frame.
+
+        Args:
+            odom_pose (np.ndarray): robot pose [x, y, theta] in odometry frame.
+            max_iter (int, optional): maximum number of iterations
+            without improvement to exit the loop. Defaults to 150.
+
+        Returns:
+            float: score associated with the best location.
         """
 
-        best_pose_ref = self.odom_pose_ref
-        best_score = self._score(lidar, self.get_corrected_pose(raw_odom_pose))
+        best_ref: np.ndarray = self.odom_origin
+        best_score: float = self.score(
+            self.get_corrected_pose(odom_pose))
 
-        counter = 0
+        iter_counter: int = 0
 
-        while counter < N:
-            delta = np.random.normal([0.0, 0.0, 0.0], [5.0, 5.0, 0.15])
-            new_ref = best_pose_ref + delta
+        while iter_counter < max_iter:
+            delta: np.ndarray = np.random.normal(0.0, [3.0, 3.0, 0.02])
 
-            corrected = self.get_corrected_pose(
-                raw_odom_pose, odom_pose_ref=new_ref)
+            corrected: np.ndarray = self.get_corrected_pose(
+                odom_pose, odom_origin=best_ref + delta)
 
-            score = self._score(lidar, corrected)
+            score: float = self.score(corrected)
 
-            if best_score is None or score > best_score:
+            if score > best_score:
+                best_ref += delta
                 best_score = score
-                best_pose_ref = new_ref
 
-                counter = 0
+                iter_counter = 0
 
             else:
-                counter += 1
+                iter_counter += 1
 
-        self.odom_pose_ref = best_pose_ref
+        self.odom_origin = best_ref
 
         return best_score
 
-    def update_map(self, lidar, pose):
+    def update_map(self, pose: np.ndarray) -> None:
         """
-        Bayesian map update with new observation
-        lidar : placebot object with lidar data
-        pose : [x, y, theta] nparray, corrected pose in world coordinates
+        Bayesian map update with new observation.
+
+        Args:
+            pose (np.ndarray): robot pose in format [x, y, theta].
         """
 
-        angles = lidar.get_ray_angles()
-        distances = lidar.get_sensor_values()
+        angles: np.ndarray = self.lidar.get_ray_angles()
+        distances: np.ndarray = self.lidar.get_sensor_values()
 
-        cos = np.cos(pose[2] + angles)
-        sin = np.sin(pose[2] + angles)
+        cos: np.ndarray = np.cos(pose[2] + angles)
+        sin: np.ndarray = np.sin(pose[2] + angles)
 
-        x_free_space = pose[0] + (distances - WALL_SPACING) * cos
-        y_free_space = pose[1] + (distances - WALL_SPACING) * sin
+        x_free_space: np.ndarray = pose[0] + (distances - WALL_SPACING) * cos
+        y_free_space: np.ndarray = pose[1] + (distances - WALL_SPACING) * sin
 
-        x_wall_start = pose[0] + (distances - WALL_WIDTH / 2) * cos
-        y_wall_start = pose[1] + (distances - WALL_WIDTH / 2) * sin
+        x_wall_start: np.ndarray = pose[0] + (distances - WALL_WIDTH / 2) * cos
+        y_wall_start: np.ndarray = pose[1] + (distances - WALL_WIDTH / 2) * sin
 
-        x_wall_end = pose[0] + (distances + WALL_WIDTH / 2) * cos
-        y_wall_end = pose[1] + (distances + WALL_WIDTH / 2) * sin
+        x_wall_end: np.ndarray = pose[0] + (distances + WALL_WIDTH / 2) * cos
+        y_wall_end: np.ndarray = pose[1] + (distances + WALL_WIDTH / 2) * sin
 
         for index in range(len(angles)):
             self.grid.increment_line(pose[0],
                                      pose[1],
                                      x_free_space[index],
                                      y_free_space[index],
-                                     LOG_PROB_FREE_SPACE)
+                                     LOG_PROB_VACANT)
 
             self.grid.increment_line(x_wall_start[index],
                                      y_wall_start[index],
@@ -135,6 +166,3 @@ class TinySlam:
 
         self.grid.occupancy = np.clip(
             self.grid.occupancy, MIN_LOG_PROB, MAX_LOG_PROB)
-
-        #self._score(lidar, pose)
-        self.grid.display(pose)

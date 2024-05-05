@@ -4,8 +4,8 @@ import numpy as np
 from typing import Tuple, Union
 
 
-class OccupancyGrid:
-    """ Occupancy grid object """
+class Grid:
+    """Simple occupancy grid object"""
 
     def __init__(self,
         x_min: float,
@@ -16,7 +16,7 @@ class OccupancyGrid:
     ) -> None:
 
         """
-        Constructor of OccupancyGrid object.
+        Constructor of the Grid class.
 
         Args:
             x_min (float): world minimum x coordinate in meters.
@@ -45,7 +45,7 @@ class OccupancyGrid:
     ) -> Union[Tuple[int, int], Tuple[np.ndarray, np.ndarray]]:
 
         """
-        Convert from world coordinates to grid coordinates (i.e. cell indices).
+        Converts from world coordinates to grid coordinates (i.e. cell indices).
 
         Args:
             x_world (float | np.ndarray): x coordinates in meters.
@@ -76,7 +76,7 @@ class OccupancyGrid:
     ) -> Union[Tuple[float, float], Tuple[np.ndarray, np.ndarray]]:
 
         """
-        Convert from grid coordinates (i.e. cell indices) to world coordinates.
+        Converts from grid coordinates (i.e. cell indices) to world coordinates.
 
         Args:
             x_grid (int | np.ndarray): x coordinates in cell numbers (~pixels).
@@ -105,7 +105,7 @@ class OccupancyGrid:
     ) -> None:
 
         """
-        Increment a value to an array of world points.
+        Increments a value to an array of world points.
 
         Args:
             x_world (float | np.ndarray): x coordinates in meters.
@@ -131,7 +131,7 @@ class OccupancyGrid:
     ) -> None:
 
         """
-        Increment a value to a line of points using Bresenham algorithm.
+        Increments a value to a line of points using Bresenham algorithm.
 
         Args:
             x0_world (float): x coordinate of starting point in meters.
@@ -185,16 +185,16 @@ class OccupancyGrid:
             self.occupancy[points[:, 0], points[:, 1]] += value
 
     def display(self,
-        robot_pose: np.ndarray,
+        pose: np.ndarray,
         goal: np.ndarray = None,
         traj: np.ndarray = None
     ) -> None:
 
         """
-        Screen display of occupancy grid and robot pose.
+        Displays the robot's occupation grid and pose on the screen.
 
         Args:
-            robot_pose (np.ndarray): robot pose in format [x, y, theta].
+            pose (np.ndarray): robot pose in format [x, y, theta].
             goal (np.ndarray, optional): goal point in world
             frame with coordinates in meters. Defaults to None.
             traj (np.ndarray, optional): trajectory points in world
@@ -220,10 +220,10 @@ class OccupancyGrid:
             point: np.ndarray = self.world2grid(goal[0], -goal[1])
             cv.circle(img, point, 3, (255, 255, 255), -1)
 
-        point1: np.ndarray = self.world2grid(robot_pose[0], -robot_pose[1])
+        point1: np.ndarray = self.world2grid(pose[0], -pose[1])
         point2: np.ndarray = self.world2grid(
-             robot_pose[0] + 20.0 * np.cos(robot_pose[2]),
-            -robot_pose[1] - 20.0 * np.sin(robot_pose[2]))
+             pose[0] + 20.0 * np.cos(pose[2]),
+            -pose[1] - 20.0 * np.sin(pose[2]))
 
         cv.arrowedLine(img, point1, point2, (0, 0, 255), thickness=2)
         cv.imshow("Occupancy grid", img)
